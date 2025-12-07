@@ -10,19 +10,16 @@ from app.services.onchain_fetcher import (
     OnchainFetcherError,
 )
 
-# plus tard : from app.services.data_aggregator import DataAggregator
-
-
 app = FastAPI(
     title="HacherScan Backend API",
     version="0.1.0",
     description="Backend d'analyse de risque crypto & quantique.",
 )
 
-# 🔓 CORS : autoriser les appels venant de ton site Base44 (et autres frontends)
+# CORS – pour que Base44 / ton front puissent appeler l’API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # si tu veux, on pourra plus tard limiter à ton domaine Base44
+    allow_origins=["*"],  # on pourra restreindre plus tard
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,7 +36,6 @@ def health_check():
     return {"status": "ok", "app": "HacherScan V2"}
 
 
-# --- Route Onchain brute : récupère uniquement les données on-chain ---
 @app.get(
     "/api/onchain/token",
     response_model=OnchainTokenData,
@@ -59,21 +55,19 @@ async def get_token_onchain_data(chain: Chain, contract_address: str):
         raise HTTPException(status_code=500, detail=f"Erreur interne : {e}")
 
 
-# --- Route HacherScan : renvoie le score de risque complet ---
 @app.post(
     "/api/hacherscan",
     response_model=RiskResult,
     summary="Scanner un token et obtenir un HacherScore V2",
 )
-async def scan_token(request: ScanRequest):
+async def scan_token(request: ScanRequest):   # 🔴 ICI : le paramètre s'appelle `request`
     """
     Body attendu :
     {
-      "chain": "ethereum" | "bsc" | "base",
+      "chain": "ethereum",
       "contract_address": "0x..."
     }
     """
-    # normaliser la chaîne
     try:
         chain_enum = Chain(request.chain.lower())
     except ValueError:
@@ -84,6 +78,4 @@ async def scan_token(request: ScanRequest):
 
     result = await compute_risk_score(chain_enum, request.contract_address.strip())
     return result
-
-# plus tard : ajouter des routes pour d'autres services (DataAggregator, etc.)
 
