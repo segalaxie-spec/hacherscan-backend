@@ -1,70 +1,89 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from utils.scoring import compute_hacherscan_scores
+from pydantic import BaseModel
 
-# -------------------------
-# CONFIG FASTAPI
-# -------------------------
-app = FastAPI(title="HacherScan Backend API")
+from app.scoring import compute_risk_score, RiskResult
+from app.services.onchain_fetcher import (
+    Chain,
+    OnchainTokenData,
+    fetch_token_onchain_data,
+    OnchainFetcherError,
+)
 
-# CORS : pour autoriser ton site Base44 à appeler l'API
+# plus tard : from app.services.data_aggregator import DataAggregator
+
+
+app = FastAPI(
+    title="HacherScan Backend API",
+    version="0.1.0",
+    description="Backend d'analyse de risque crypto & quantique.",
+)
+
+# 🔓 CORS : autoriser les appels venant de ton site Base44 (et autres frontends)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tu mettras ton domaine Base44 quand il sera en ligne
+    allow_origins=["*"],  # si tu veux, on pourra plus tard limiter à ton domaine Base44
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# -------------------------
-# MODELES DE DONNÉES
-# -------------------------
+
 class ScanRequest(BaseModel):
-    query: str
-
-class ScanResponse(BaseModel):
-    hacher_score: int
-    hack_risk: int
-    quantum_risk: int
-    risk_level: str
-    message: str
-
-# -------------------------
-# ROUTE PRINCIPALE : /api/hacherscan
-# -------------------------
-@app.post("/api/hacherscan", response_model=ScanResponse)
-def scan(data: ScanRequest):
-    # On délègue tout le calcul à l'algorithme dans utils/scoring.py
-    result = compute_hacherscan_scores(data.query)
-
-    return ScanResponse(
-        hacher_score=result.hacher_score,
-        hack_risk=result.hack_risk,
-        quantum_risk=result.quantum_risk,
-        risk_level=result.risk_level,
-        message=result.message
-    )
+    chain: str
+    contract_address: str
 
 
-# -------------------------
-# PROJETS (FAUSSES DONNÉES POUR TEST)
-# -------------------------
-@app.get("/api/projects")
-def projects():
-    return [
-        {
-            "id": "naoris",
-            "name": "Naoris Protocol",
-            "hacher_score": 78,
-            "hack_risk": 82,
-            "quantum_risk": 72
-        },
-        {
-            "id": "qanx",
-            "name": "QANX",
-            "hacher_score": 71,
-            "hack_risk": 75,
-            "quantum_risk": 68
-        }
-    ]
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "app": "HacherScan V2"}
+
+
+# --- Route Onchain brute : récupère uniquement les données on-chain ---
+@app.get(
+    "/api/onchain/token",
+    response_model=OnchainTokenData,
+    summary="Récupérer les infos on-chain d'un token",
+)
+async def get_token_onchain_data(chain: Chain, contract_address: str):
+    """
+    Exemple :
+    GET /api/onchain/token?chain=ethereum&contract_address=0xA0b8...
+    """
+    try:
+        data = await fetch_token_onchain_data(chain, contract_address.strip())
+        return data
+    except OnchainFetcherError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur interne : {e}")
+
+
+# --- Route HacherScan : renvoie le score de risque complet ---
+@app.post(
+    "/api/hacherscan",
+    response_model=RiskResult,
+    summary="Scanner un token et obtenir un HacherScore V2",
+)
+async def scan_token(request: ScanRequest):
+    """
+    Body attendu :
+    {
+      "chain": "ethereum" | "bsc" | "base",
+      "contract_address": "0x..."
+    }
+    """
+    # normaliser la chaîne
+    try:
+        chain_enum = Chain(request.chain.lower())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Chaîne non supportée : {request.chain}",
+        )
+
+    result = await compute_risk_score(chain_enum, request.contract_address.strip())
+    return result
+
+# plus tard : ajouter des routes pour d'autres services (DataAggregator, etc.)
+
